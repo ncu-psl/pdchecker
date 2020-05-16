@@ -12,7 +12,7 @@ class Typed:
 
         if get_origin(_type) is list:
             types = [t._type for t in lit]
-            if all(t == types[0] for t in types):
+            if types and all(t == types[0] for t in types):
                 self._type = List[types[0]]
 
 def in_union(t1, t2):
