@@ -2,7 +2,7 @@ import ast
 
 from typing import List
 
-from spec4 import DataFrame, Typed
+from spec4 import *
 from collections import defaultdict
 
 from functools import partial, partialmethod
@@ -37,6 +37,10 @@ class Interpreter:
             v = a.value
             return self.Constant(a, v)
         elif type(a) == ast.List:
+            elts = self.interprets(a.elts)
+            return self.List(a, elts, a.ctx)
+        elif type(a) == ast.Tuple:
+            # XXX
             elts = self.interprets(a.elts)
             return self.List(a, elts, a.ctx)
         elif type(a) == ast.Name:
@@ -96,7 +100,12 @@ class Ty(Interpreter):
     def Attribute(self, a, value, attr, _ctx):
         return getattr(value,attr)
     def Constant(self, a, v):
-        return Typed(type(v), v)
+        if type(v) is str:
+            return StrLike(v)
+        elif type(v) is int:
+            return IntLike(v)
+        else:
+            raise TypeError(f'unsupport constant: {v !r}')
     def Call(self, a, f, args, kwargs):
         # TODO: align params here
         return f(*args, **dict(kwargs))
@@ -104,14 +113,23 @@ class Ty(Interpreter):
         return (arg, value)
     def Subscript(self, a, v, _slice, _ctx):
         if type(_ctx) == ast.Store:
-            return partial(v.__set_item__, _slice.lit)
+            return partial(v.__set_item__, _slice.val)
         return v[_slice]
     def Index(self, a, v):
         return v
     def List(self, a, elts, v):
-        return Typed(List, elts)
+        if elts:
+            return ListLike(elts, elts[0])
+        else:
+            return ListLike([], None)
     def Add(self, a, left, right):
         return left + right
+    def Sub(self, a, left, right):
+        return left - right
+    def Mul(self, a, left, right):
+        return left * right
+    def Div(self, a, left, right):
+        return left / right
 
 class Sp(Interpreter):
     env = {}
@@ -126,7 +144,7 @@ class Sp(Interpreter):
     def FunctionDef(self, a: ast.FunctionDef, body):
         return (a.name, match)
     def Constant(self, a, v):
-        return 
+        return
 
 
 # sp = Sp()
@@ -141,12 +159,25 @@ class Sp(Interpreter):
 #             print(k, f, [ast.dump(x) for x in b])
 itpr = Ty()
 # itpr.env['df1'] = DataFrame(__index=int, __columns={'x': int})
+itpr.env['sum']     = Func(IntLike, IntLike)
+
+class Literal:
+    def __getitem__(self, value):
+        return LiteralType(value)
+
+itpr.env['Literal'] = Literal()
 
 code = '''
 import pandas as pd
 df = pd.read_csv('/tmp/test.csv')
 df["x"] = pd.Series([1,2,3])
-df['y'] = df['x'] + 1
+df["y"] = pd.Series(["a", "b", "a"])
+(df
+.hint_cast(y=Literal["a", "c"])
+.pivot("x", "y", "a")
+)
+df["x"] / 2
+# df["x"].__div__(2)
 '''
 
 t = itpr.interpret(ast.parse(code))

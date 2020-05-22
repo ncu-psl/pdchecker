@@ -4,82 +4,108 @@ from dataclasses import dataclass, field
 
 def read_csv(fp):
     import pandas as pd
-    df = pd.read_csv(fp.lit)
+    df = pd.read_csv(fp.val)
     return DataFrame(_index=df.index.dtype, _columns=df.dtypes.to_dict())
 
-class IntLike:
-    def __add__(self, other):
-        if other is IntLike:
-            return IntLike
+class Type:
+    def subtype_of(self, other):
+        return other.subtype(self)
+    def subtype(self, other):
+        return NotImplemented
+    def binop(self, other):
+        return NotImplemented
+    def rbinop(self, other):
+        return NotImplemented
+
+    def __add__(self, other):  return self.binop(other)
+    def __sub__(self, other):  return self.binop(other)
+    def __mul__(self, other):  return self.binop(other)
+    def __div__(self, other):  return self.binop(other)
+    def __radd__(self, other): return self.rbinop(other)
+    def __rsub__(self, other): return self.rbinop(other)
+    def __rmul__(self, other): return self.rbinop(other)
+    def __rdiv__(self, other): return self.rbinop(other)
 
 @dataclass
-class Typed:
-    _type: Type
-    lit: Any
-    def __init__(self, _type: Type, lit: Any):
-        self._type = _type
-        self.lit = lit
-
-        if get_origin(_type) is list:
-            types = [t._type for t in lit]
-            if types and all(t == types[0] for t in types):
-                self._type = List[types[0]]
-    def __add__(self, other):
-        if other is not Typed:
-            raise NotImplemented()
-        return self
-
-    def __radd__(self, other):
-        if other is int:
-            return self
-
-
-def binop(a, b):
-    if type(a) is type and type(b) is type:
-        pass
-    else:
-        return a + b
-
-def in_union(t1, t2):
-    if get_origin(t2) is Union:
-        return t1 in get_args(t2)
-    else:
-        return t1 == t2
+class LiteralType(Type):
+    kinds: List[Type]
+    def __init__(self, vs):
+        if type(vs) is ListLike:
+            self.kinds = vs.val
+        else:
+            self.kinds = vs
+    def subtype(other):
+        return any(other.val == k.val for k in kinds)
 
 @dataclass
-class Series:
+class IntLike(Type):
+    val: int
+    def empty(self):
+        return IntLike(None)
+    def subtype(self, other):
+        if type(other) is IntLike:
+            return True
+        return False
+    def binop(self, other):
+        if type(other) is IntLike:
+            return self.empty()
+        else:
+            return NotImplemented
+
+@dataclass
+class StrLike(Type):
+    val: str
+
+@dataclass
+class ListLike(Type):
+    val: Any
+    typ: Type
+
+@dataclass
+class Func(Type):
+    arg: Any
+    ret: Any
+    def __call__(self, arg):
+        # XXX
+        return self.ret
+
+@dataclass
+class Series(Type):
     index: Type = None
     value: Type = None
-    def __init__(self, data: Typed = None, index=None, *, _index=None, _value=None):
+    def __init__(self, data = None, index=None, *, _index=None, _value=None):
         self.index = _index
         self.value = _value
-        if data and get_origin(data._type) is list:
-            self.value = get_args(data._type)[0]
+        if type(data) is ListLike:
+            self.value = data.typ
 
-    def __add__(self, other):
-        res = add(self.value, other)
-        if res is Typed:
-            res = res._type
-        return Series(_index=self.index, _value=res)
+    def apply(self, func):
+        return Series(_index=self.index, _value=func(self.value))
 
-StrLike = Union[str]
+    def binop(self, other):
+        return Series(_index=self.index, _value=self.value.binop(other))
+
+    __add__ = binop
+    __sub__ = binop
+    __mul__ = binop
+    __truediv__ = binop
 
 @dataclass
-class LocIndexerFrame:
+class LocIndexerFrame(Type):
     df: 'DataFrame'
 
-    def __getitem__(self, idx: Typed):
-        if in_union(idx._type, StrLike):
-            if idx.lit in self.df.columns:
-                return Series(_index=self.df.index, _value=self.df.columns.get(idx.lit))
+    def __getitem__(self, idx):
+        if type(idx) is StrLike:
+            if idx.val in self.df.columns:
+                return Series(_index=self.df.index, _value=self.df.columns.get(idx.val))
             else:
-                raise TypeError(f'{idx.lit} not in dataframe')
-        elif get_origin(idx._type) is list:
+                raise TypeError(f'{idx.val} not in dataframe')
+        elif type(idx) is ListLike:
             res = {}
             missing = []
-            for label in idx.lit:
-                if label.lit in self.df.columns:
-                    res[label.lit] = self.df.columns[label.lit]
+            for label in idx.val:
+                if label.val in self.df.columns:
+                    res[label.val] = self.df.columns[label.val]
                 else:
                     missing.append(label)
             if missing:
@@ -91,7 +117,7 @@ class LocIndexerFrame:
 
 
 @dataclass
-class DataFrame:
+class DataFrame(Type):
     index: Type = None
     columns: Dict[str, Type] = field(default_factory=dict)
 
@@ -99,10 +125,10 @@ class DataFrame:
         self.index = _index
         self.columns = _columns
 
-    def __getitem__(self, idx: Typed):
+    def __getitem__(self, idx):
         return LocIndexerFrame(self).__getitem__(idx)
 
-    def __set_item__(self, idx: Typed, value):
+    def __set_item__(self, idx, value):
         new = self.assign(**{idx: value})
         self.columns = new.columns
         self.index = new.index
@@ -112,19 +138,19 @@ class DataFrame:
     def loc(self):
         return LocIndexerFrame(self.index, self.columns)
 
-    def assign(self, **kwargs: Dict[str, Typed]):
+    def assign(self, **kwargs: Dict[str, Type]):
         new_cols = {}
         for k, v in kwargs.items():
             if isinstance(v, Series):
                 new_cols[k] = v.value
-            elif isinstance(get_origin(v._type), Callable):
-                ret_type = get_args(v._type)[-1]
+            elif type(v) is Func:
+                ret_type = v.ret
                 if isinstance(ret_type, Series):
                     new_cols[k] = ret_type.value
                 else:
                     raise TypeError('Callable not returning a Series')
-            elif get_origin(v._type) is list:
-                new_cols[k] = get_args(v._type)[-1]
+            elif type(v) is ListLike:
+                new_cols[k] = v.value
             else:
                 raise TypeError(f'Not type checked: {v._type!r}')
         return DataFrame(_index=self.index, _columns={**self.columns, **new_cols})
@@ -142,7 +168,7 @@ class DataFrame:
         if not isinstance(other, DataFrame):
             raise TypeError('other is not a DataFrame')
         other: DataFrame = other
-        on_labels = [lbl.lit for lbl in on.lit]
+        on_labels = [lbl.val for lbl in on.val]
         if not all(lbl in self.columns for lbl in on_labels):
             raise TypeError('missing label')
         if not all(lbl in other.columns for lbl in on_labels):
@@ -157,40 +183,43 @@ class DataFrame:
         return DataFrame(_index=self.index, _columns={**self.columns, **other.columns})
 
     def groupby(self, by=None):
-        if isinstance(by, Typed):
-            key = None
-            if by._type is str and by.lit in self.columns:
-                key = [by.lit]
-            elif get_origin(by._type) is list and get_args(by._type)[0] is str:
-                if not all(lbl.lit in self.columns for lbl in by.lit):
-                    raise TypeError('key not found')
-                else:
-                    key = [lbl.lit for lbl in by.lit]
-            if key:
-                return DataFrameGroupBy(key, self)
+        key = None
+        if type(by) is StrLike and by.val in self.columns:
+            key = [by.val]
+        elif type(by) is ListLike and by.typ is StrLike:
+            if not all(lbl.val in self.columns for lbl in by.val):
+                raise TypeError('key not found')
+            else:
+                key = [lbl.val for lbl in by.val]
+        if key:
+            return DataFrameGroupBy(key, self)
         raise TypeError('Not type checked')
 
 
     def drop_duplicates(self, subset=None, keep=None):
         missing = []
-        for label in subset.lit:
-            if label.lit not in self.columns:
-                missing.append(label.lit)
+        for label in subset.val:
+            if label.val not in self.columns:
+                missing.append(label.val)
         if missing:
             raise IndexError()
         return self
 
     def pivot(self, index, columns, values):
         # TODO multiple column/values
-        idx    = self.columns[index.lit]
-        col    = self.columns[columns.lit]
-        value  = self.columns[values.lit]
-        if is_kind(idx):
-            new_labels = unpack(col)
-            new_col    = {l:value for l in new_labels}
+        idx    = self.columns[index.val]
+        col    = self.columns[columns.val]
+        value  = self.columns[values.val]
+        if type(col) is LiteralType:
+            new_labels = col.kinds
+            new_col    = {l.val:value for l in new_labels}
             return DataFrame(_index=idx, _columns=new_col)
         else:
+            # try ask a LiteralType
             raise NotImplemented()
+
+    def hint_cast(self, **kwargs):
+        return DataFrame(_index=self.index, _columns={**self.columns, **kwargs})
 
 @dataclass
 class DataFrameGroupBy:
@@ -198,15 +227,10 @@ class DataFrameGroupBy:
     df: DataFrame = None
 
     def agg(self, func, axis=0):
-        if not isinstance(get_origin(func._type), Callable):
+        if type(func) is not Func:
             raise TypeError('not a function')
 
-        def apply(f, v):
-            args, ret = get_args(func._type)
-            #XXX check input
-            return ret
-
         return DataFrame(_index=tuple(self.df.columns[k] for k in self.key),
-                        _columns={k: apply(func, v) for k, v in self.df.columns.items() if k not in self.key})
+                        _columns={k: func(v) for k, v in self.df.columns.items() if k not in self.key})
 
         raise TypeError('Not Type checked')
