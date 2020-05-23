@@ -79,6 +79,7 @@ class Interpreter:
             else:
                 raise Exception(ast.dump(a))
 
+
 class Ty(Interpreter):
     env = {}
     def Module(self, a, body):
@@ -95,8 +96,7 @@ class Ty(Interpreter):
     def Assign(self, a, targets, value):
         if len(targets) > 1:
             return None
-        targets[0](value)
-        return None
+        return targets[0](value)
     def Attribute(self, a, value, attr, _ctx):
         return getattr(value,attr)
     def Constant(self, a, v):
@@ -118,6 +118,7 @@ class Ty(Interpreter):
     def Index(self, a, v):
         return v
     def List(self, a, elts, v):
+        # XXX
         if elts:
             return ListLike(elts, elts[0])
         else:
@@ -130,6 +131,18 @@ class Ty(Interpreter):
         return left * right
     def Div(self, a, left, right):
         return left / right
+
+class TyLog(Ty):
+    srcmap = {}
+    def __getattribute__(self, attr):
+        orig = Ty.__getattribute__(self, attr)
+        if not hasattr(orig, '__call__') or not orig.__name__[0].isupper():
+            return orig
+        def f(a, *args, **kwargs):
+            res = orig(a, *args, **kwargs)
+            self.srcmap[a] = res
+            return res
+        return f
 
 class Sp(Interpreter):
     env = {}
@@ -157,8 +170,8 @@ class Sp(Interpreter):
 #     for f, bs in v.items():
 #         for b in bs:
 #             print(k, f, [ast.dump(x) for x in b])
-itpr = Ty()
-# itpr.env['df1'] = DataFrame(__index=int, __columns={'x': int})
+itpr = TyLog()
+itpr.env['df1'] = DataFrame(__index=int, __columns={'x': int})
 itpr.env['sum']     = Func(IntLike, IntLike)
 
 class Literal:
@@ -183,4 +196,5 @@ df["x"] / 2
 t = itpr.interpret(ast.parse(code))
 print(t)
 print(itpr.env)
+# print(itpr.srcmap)
 

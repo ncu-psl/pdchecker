@@ -136,7 +136,7 @@ class DataFrame(Type):
 
     @property
     def loc(self):
-        return LocIndexerFrame(self.index, self.columns)
+        return LocIndexerFrame(self)
 
     def assign(self, **kwargs: Dict[str, Type]):
         new_cols = {}
