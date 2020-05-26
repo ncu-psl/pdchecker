@@ -1,6 +1,11 @@
 from typing import List, Tuple, Callable, Dict, Optional, Type, Any, Union, Generic, TypeVar, get_args, get_origin
 from dataclasses import dataclass, field
 
+def read_csv(fp):
+    import pandas as pd
+    df = pd.read_csv(fp.lit)
+    return DataFrame(_index=df.index.dtype, _columns=df.dtypes.to_dict())
+
 
 @dataclass
 class Typed:
@@ -30,26 +35,25 @@ StrLike = Union[str]
 
 @dataclass
 class LocIndexerFrame:
-    index: Type = None
-    columns: Dict[str, Type] = field(default_factory=dict)
+    df: Any
 
     def __getitem__(self, idx: Typed):
         if in_union(idx._type, StrLike):
-            if idx.lit in self.columns:
-                return Series(index=self.index, value=self.columns.get(idx.lit))
+            if idx.lit in self.df.columns:
+                return Series(index=self.df.index, value=self.df.columns.get(idx.lit))
             else:
                 raise TypeError(f'{idx.lit} not in dataframe')
         elif get_origin(idx._type) is list:
             res = {}
             missing = []
             for label in idx.lit:
-                if label.lit in self.columns:
-                    res[label.lit] = self.columns[label.lit]
+                if label.lit in self.df.columns:
+                    res[label.lit] = self.df.columns[label.lit]
                 else:
                     missing.append(label)
             if missing:
                 raise TypeError(f'{missing!r} not in dataframe')
-            return DataFrame(index=self.index, columns=res)
+            return DataFrame(index=self.df.index, columns=res)
 
         else:
             raise TypeError(f'Not type checked: {idx!r}')
@@ -63,12 +67,17 @@ class DataFrame:
 
     @property
     def loc(self):
-        return LocIndexerFrame(self.index, self.columns)
-
+        return LocIndexerFrame(self)
 
     @staticmethod
     def ___init__(self):
         return DataFrame()
+
+    def __getitem__(self, idx: Typed):
+        return LocIndexerFrame(self).__getitem__(idx)
+
+    def __setitem__(self, idx: Typed, value):
+        return self.assign(**{idx: value})
 
     def assign(self, **kwargs: Dict[str, Typed]):
         new_cols = {}
@@ -93,10 +102,34 @@ class DataFrame:
         elif axis in [1, 'columns']:
             return Series(self.index, int)
 
+    def head(self):
+        return self
+
     def describe(self):
         return DataFrame()
 
-    def merge(self, other, on, how='left'):
+    def drop_duplicates(self, subset=None, keep=None):
+        missing = []
+        for label in subset.lit:
+            if label.lit not in self.columns:
+                missing.append(label.lit)
+        if missing:
+            raise IndexError()
+        return self
+
+    def pivot(self, index, columns, values):
+        # TODO multiple column/values
+        idx    = self.columns[index.lit]
+        col    = self.columns[columns.lit]
+        value  = self.columns[values.lit]
+        if is_kind(idx):
+            new_labels = unpack(col)
+            new_col    = {l:value for l in new_labels}
+            return DataFrame(_index=idx, _columns=new_col)
+        else:
+            raise NotImplemented()
+
+    def merge(self, other, on, how=None):
         if not isinstance(other, DataFrame):
             raise TypeError('other is not a DataFrame')
         other: DataFrame = other
@@ -127,7 +160,6 @@ class DataFrame:
             if key:
                 return DataFrameGroupBy(key, self)
         raise TypeError('Not type checked')
-
 
 @dataclass
 class DataFrameGroupBy:

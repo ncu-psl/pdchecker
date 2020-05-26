@@ -19,7 +19,7 @@ class Interpreter:
             body = self.interprets(a.body)
             return self.Module(a, body)
         elif type(a) == ast.Expression:
-            return self.interpret(a.body)
+            return self.Expression(a.body)
         elif type(a) == ast.ClassDef:
             body = self.interprets(a.body)
             return self.ClassDef(a, a.name, a.bases, a.keywords, body, a.decorator_list)
@@ -84,6 +84,8 @@ class Ty(Interpreter):
     env = {}
     def Module(self, a, body):
         return body[-1]
+    def Expression(self, a, body):
+        return self.interpret(body)
     def Import(self, a, names):
         for n in a.names:
             if type(n) == ast.alias:
@@ -133,7 +135,8 @@ class Ty(Interpreter):
         return left / right
 
 class TyLog(Ty):
-    srcmap = {}
+    def __init__(self):
+        self.srcmap = {}
     def __getattribute__(self, attr):
         orig = Ty.__getattribute__(self, attr)
         if not hasattr(orig, '__call__') or not orig.__name__[0].isupper():
@@ -142,6 +145,32 @@ class TyLog(Ty):
             res = orig(a, *args, **kwargs)
             self.srcmap[a] = res
             return res
+        f.__name__ = attr
+        return f
+
+class TyError(TyLog):
+    def __init__(self):
+        TyLog.__init__(self)
+        self.errors = []
+
+    def __getattribute__(self, attr):
+        orig = TyLog.__getattribute__(self, attr)
+        if not hasattr(orig, '__call__') or not orig.__name__[0].isupper():
+            return orig
+        def f(a, *args, **kwargs):
+            try:
+                res = orig(a, *args, **kwargs)
+                return res
+            except CheckerError as e:
+                self.errors.append({
+                    'node': attr,
+                    'lineno': a.lineno,
+                    'col_offset': a.col_offset,
+                    'end_lineno': a.end_lineno,
+                    'end_col_offset': a.end_col_offset,
+                    'error': e
+                    })
+        f.__name__ = attr
         return f
 
 class Sp(Interpreter):
@@ -170,15 +199,18 @@ class Sp(Interpreter):
 #     for f, bs in v.items():
 #         for b in bs:
 #             print(k, f, [ast.dump(x) for x in b])
-itpr = TyLog()
-itpr.env['df1'] = DataFrame(__index=int, __columns={'x': int})
-itpr.env['sum']     = Func(IntLike, IntLike)
 
 class Literal:
     def __getitem__(self, value):
         return LiteralType(value)
 
-itpr.env['Literal'] = Literal()
+def check(code):
+    itpr = TyError()
+    # itpr.env['df1'] = DataFrame(_index=int, _columns={'x': int})
+    # itpr.env['sum']     = Func(IntLike, IntLike)
+    itpr.env['Literal'] = Literal()
+    itpr.interpret(ast.parse(code))
+    return itpr
 
 code = '''
 import pandas as pd
@@ -191,10 +223,12 @@ df["y"] = pd.Series(["a", "b", "a"])
 )
 df["x"] / 2
 # df["x"].__div__(2)
+df.loc['z']
 '''
 
-t = itpr.interpret(ast.parse(code))
-print(t)
-print(itpr.env)
+check(code)
+
+# print(t)
+# print(itpr.env)
 # print(itpr.srcmap)
 

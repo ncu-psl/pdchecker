@@ -1,6 +1,23 @@
 from typing import List, Tuple, Callable, Dict, Optional, Type, Any, Union, Generic, TypeVar, get_args, get_origin
 from dataclasses import dataclass, field
 
+class CheckerError(Exception):
+    def __init__(self, message):
+        self.message = message
+    def __str__(self):
+        return self.message
+
+class CheckerNotImplementedError(CheckerError):
+    def __init__(self, obj):
+        self.obj = obj
+        self.message = f'Not implemented for {obj !r}'
+
+class CheckerIndexError(CheckerError):
+    def __init__(self, index, message=None):
+        self.index = index
+        self.message = f'Index {index !r} not found.'
+
+
 
 def read_csv(fp):
     import pandas as pd
@@ -99,7 +116,7 @@ class LocIndexerFrame(Type):
             if idx.val in self.df.columns:
                 return Series(_index=self.df.index, _value=self.df.columns.get(idx.val))
             else:
-                raise TypeError(f'{idx.val} not in dataframe')
+                raise CheckerIndexError(idx.val)
         elif type(idx) is ListLike:
             res = {}
             missing = []
@@ -109,11 +126,11 @@ class LocIndexerFrame(Type):
                 else:
                     missing.append(label)
             if missing:
-                raise TypeError(f'{missing!r} not in dataframe')
+                raise CheckerIndexError(missing)
             return DataFrame(_index=self.df.index, _columns=res)
 
         else:
-            raise TypeError(f'Not type checked: {idx!r}')
+            raise CheckerNotImplementedError(idx)
 
 
 @dataclass
@@ -148,11 +165,11 @@ class DataFrame(Type):
                 if isinstance(ret_type, Series):
                     new_cols[k] = ret_type.value
                 else:
-                    raise TypeError('Callable not returning a Series')
+                    raise CheckerError('Callable not returning a Series')
             elif type(v) is ListLike:
                 new_cols[k] = v.value
             else:
-                raise TypeError(f'Not type checked: {v._type!r}')
+                raise CheckerError(f'Not type checked: {v._type!r}')
         return DataFrame(_index=self.index, _columns={**self.columns, **new_cols})
 
     def count(self, axis=None):
@@ -166,19 +183,19 @@ class DataFrame(Type):
 
     def merge(self, other, on, how='left'):
         if not isinstance(other, DataFrame):
-            raise TypeError('other is not a DataFrame')
+            raise CheckerError('other is not a DataFrame')
         other: DataFrame = other
         on_labels = [lbl.val for lbl in on.val]
         if not all(lbl in self.columns for lbl in on_labels):
-            raise TypeError('missing label')
+            raise CheckerError('missing label')
         if not all(lbl in other.columns for lbl in on_labels):
-            raise TypeError('missing label')
+            raise CheckerError('missing label')
 
         left_fields  = [ self.columns[lbl] for lbl in on_labels]
         right_fields = [other.columns[lbl] for lbl in on_labels]
 
         if not all(t1 == t2 for t1, t2 in zip(left_fields, right_fields)):
-            raise TypeError('type mismatch')
+            raise CheckerError('type mismatch')
 
         return DataFrame(_index=self.index, _columns={**self.columns, **other.columns})
 
@@ -188,12 +205,12 @@ class DataFrame(Type):
             key = [by.val]
         elif type(by) is ListLike and by.typ is StrLike:
             if not all(lbl.val in self.columns for lbl in by.val):
-                raise TypeError('key not found')
+                raise CheckerError('key not found')
             else:
                 key = [lbl.val for lbl in by.val]
         if key:
             return DataFrameGroupBy(key, self)
-        raise TypeError('Not type checked')
+        raise CheckerError('Not type checked')
 
 
     def drop_duplicates(self, subset=None, keep=None):
@@ -202,7 +219,7 @@ class DataFrame(Type):
             if label.val not in self.columns:
                 missing.append(label.val)
         if missing:
-            raise IndexError()
+            raise CheckerIndexError(missing)
         return self
 
     def pivot(self, index, columns, values):
@@ -216,7 +233,7 @@ class DataFrame(Type):
             return DataFrame(_index=idx, _columns=new_col)
         else:
             # try ask a LiteralType
-            raise NotImplemented()
+            raise CheckerNotImplementedError()
 
     def hint_cast(self, **kwargs):
         return DataFrame(_index=self.index, _columns={**self.columns, **kwargs})
@@ -228,9 +245,9 @@ class DataFrameGroupBy:
 
     def agg(self, func, axis=0):
         if type(func) is not Func:
-            raise TypeError('not a function')
+            raise CheckerError('not a function')
 
         return DataFrame(_index=tuple(self.df.columns[k] for k in self.key),
                         _columns={k: func(v) for k, v in self.df.columns.items() if k not in self.key})
 
-        raise TypeError('Not Type checked')
+        raise CheckerError('Not Type checked')
