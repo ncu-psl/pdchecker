@@ -15,7 +15,9 @@ class Interpreter:
     def interprets(self, xs):
         return [self.interpret(x) for x in xs]
     def interpret(self, a):
-        if type(a) == ast.Module:
+        if not a:
+            return
+        elif type(a) == ast.Module:
             body = self.interprets(a.body)
             return self.Module(a, body)
         elif type(a) == ast.Expression:
@@ -36,6 +38,10 @@ class Interpreter:
         elif type(a) == ast.Constant:
             v = a.value
             return self.Constant(a, v)
+        elif type(a) == ast.Dict:
+            keys = self.interprets(a.keys)
+            values = self.interprets(a.values)
+            return self.Dict(a, keys, values)
         elif type(a) == ast.List:
             elts = self.interprets(a.elts)
             return self.List(a, elts, a.ctx)
@@ -70,6 +76,14 @@ class Interpreter:
             left = self.interpret(a.left)
             right = self.interpret(a.right)
             return getattr(self, type(a.op).__name__)(a, left, right)
+        elif type(a) == ast.Slice:
+            lower = self.interpret(a.lower)
+            upper = self.interpret(a.upper)
+            step  = self.interpret(a.step)
+            return self.Slice(a, lower=lower, upper=upper, step=step)
+        elif type(a) == ast.ExtSlice:
+            dims = self.interprets(a.dims)
+            return self.ExtSlice(a, dims)
         else:
             if type(a) is list:
                 if a:
@@ -106,6 +120,8 @@ class Ty(Interpreter):
             return StrLike(v)
         elif type(v) is int:
             return IntLike(v)
+        elif type(v) is bool:
+            return Bool(v)
         else:
             raise TypeError(f'unsupport constant: {v !r}')
     def Call(self, a, f, args, kwargs):
@@ -119,6 +135,9 @@ class Ty(Interpreter):
         return v[_slice]
     def Index(self, a, v):
         return v
+    def Dict(self, a, keys, values):
+        # XXXX
+        return DictLike({k.val:v for k, v in zip(keys, values)})
     def List(self, a, elts, v):
         # XXX
         if elts:
@@ -133,6 +152,10 @@ class Ty(Interpreter):
         return left * right
     def Div(self, a, left, right):
         return left / right
+    def Slice(self, a, lower, upper, step):
+        return slice(lower, upper, step)
+    def ExtSlice(self, a, dims):
+        return dims
 
 class TyLog(Ty):
     def __init__(self):
@@ -214,19 +237,17 @@ def check(code):
 
 code = '''
 import pandas as pd
-df = pd.read_csv('/tmp/test.csv')
-df["x"] = pd.Series([1,2,3])
-df["y"] = pd.Series(["a", "b", "a"])
-(df
-.hint_cast(y=Literal["a", "c"])
-.pivot("x", "y", "a")
-)
-df["x"] / 2
-# df["x"].__div__(2)
-df.loc['z']
+df = pd.read_csv('./test.csv')
+df2 = pd.read_csv('./test.csv')
+df.merge(df2, on='b')
 '''
 
-check(code)
+
+itpr = TyError()
+itpr.env['Literal'] = Literal()
+res = itpr.interpret(ast.parse(code))
+print(res)
+print(itpr.errors)
 
 # print(t)
 # print(itpr.env)
