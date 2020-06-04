@@ -11,6 +11,43 @@ from pdb import set_trace
 
 import spec4 as spec
 
+def with_ast(node, ast_node):
+    if type(node) is list:
+        class list_with_ast(list):
+            def __init__(self, *args, **kwargs):
+                list.__init__(*args, **kwargs)
+        node = list_with_ast(node)
+    setattr(node, 'ast', ast_node)
+    return node
+
+def mark_slice(subs, s):
+    if type(s) is ast.Index:
+        setattr(s, 'lineno', s.value.lineno)
+        setattr(s, 'col_offset', s.value.col_offset)
+        setattr(s, 'end_lineno', s.value.end_lineno)
+        setattr(s, 'end_col_offset', s.value.end_col_offset)
+    elif type(s) is ast.ExtSlice:
+        for d in s.dims:
+            mark_slice(s, d)
+        setattr(s, 'lineno', s.dims[0].lineno)
+        setattr(s, 'col_offset', s.dims[0].col_offset)
+        setattr(s, 'end_lineno', s.dims[-1].end_lineno)
+        setattr(s, 'end_col_offset', s.dims[-1].end_col_offset)
+    elif type(s) is ast.Slice:
+        setattr(s, 'lineno', subs.lineno)
+        setattr(s, 'col_offset', subs.col_offset)
+        setattr(s, 'end_lineno', subs.end_lineno)
+        setattr(s, 'end_col_offset', subs.end_col_offset)
+
+
+
+class Annotator(ast.NodeTransformer):
+    def visit_Subscript(self, node: ast.Subscript):
+        slice = node.slice
+        if type(slice) is ast.Index:
+            ast.copy_location(node, node.value)
+        return node
+
 class Interpreter:
     def interprets(self, xs):
         return [self.interpret(x) for x in xs]
@@ -80,7 +117,8 @@ class Interpreter:
             lower = self.interpret(a.lower)
             upper = self.interpret(a.upper)
             step  = self.interpret(a.step)
-            return self.Slice(a, lower=lower, upper=upper, step=step)
+            s = self.Slice(a, lower=lower, upper=upper, step=step)
+            return 
         elif type(a) == ast.ExtSlice:
             dims = self.interprets(a.dims)
             return self.ExtSlice(a, dims)
@@ -114,7 +152,7 @@ class Ty(Interpreter):
             return None
         return targets[0](value)
     def Attribute(self, a, value, attr, _ctx):
-        return getattr(value,attr)
+        return getattr(value, attr)
     def Constant(self, a, v):
         if type(v) is str:
             return StrLike(v)
@@ -126,13 +164,18 @@ class Ty(Interpreter):
             raise TypeError(f'unsupport constant: {v !r}')
     def Call(self, a, f, args, kwargs):
         # TODO: align params here
+        args = [with_ast(n, an) for n, an in zip(args, a.args)]
+        kwargs = [(k, with_ast(n, an)) for (k, n), an in zip(kwargs, a.keywords)]
         return f(*args, **dict(kwargs))
     def Keyword(self, a, arg, value):
         return (arg, value)
     def Subscript(self, a, v, _slice, _ctx):
+
+        mark_slice(a, a.slice)
         if type(_ctx) == ast.Store:
             return partial(v.__set_item__, _slice.val)
-        return v[_slice]
+        s = with_ast(_slice, a.slice)
+        return v[s]
     def Index(self, a, v):
         return v
     def Dict(self, a, keys, values):
@@ -187,10 +230,10 @@ class TyError(TyLog):
             except CheckerError as e:
                 self.errors.append({
                     'node': attr,
-                    'lineno': a.lineno,
-                    'col_offset': a.col_offset,
-                    'end_lineno': a.end_lineno,
-                    'end_col_offset': a.end_col_offset,
+                    'lineno':         e.ast.lineno         if hasattr(e, 'ast') else a.lineno,
+                    'col_offset':     e.ast.col_offset     if hasattr(e, 'ast') else a.col_offset,
+                    'end_lineno':     e.ast.end_lineno     if hasattr(e, 'ast') else a.end_lineno,
+                    'end_col_offset': e.ast.end_col_offset if hasattr(e, 'ast') else a.end_col_offset,
                     'error': e
                     })
         f.__name__ = attr
@@ -239,13 +282,14 @@ code = '''
 import pandas as pd
 df = pd.read_csv('./test.csv')
 df2 = pd.read_csv('./test.csv')
-df.merge(df2, on='b')
+df.merge(df2, on='b')[:, '']
 '''
 
 
 itpr = TyError()
 itpr.env['Literal'] = Literal()
-res = itpr.interpret(ast.parse(code))
+a = ast.parse(code)
+res = itpr.interpret(a)
 print(res)
 print(itpr.errors)
 

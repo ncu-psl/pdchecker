@@ -8,25 +8,29 @@ class CheckerError(Exception):
         return self.message
 
 class CheckerNotImplementedError(CheckerError):
-    def __init__(self, obj):
+    def __init__(self, ast, obj):
         self.obj = obj
+        self.ast = ast
         self.message = f'Not implemented for {obj !r}.'
 
 class CheckerIndexError(CheckerError):
-    def __init__(self, index, df=None):
+    def __init__(self, ast, index, df=None):
         self.index = index
+        self.ast = ast
         self.message = f'Index {index !r} not found.'
         # if df:
         #     self.message = f'Index {index !r} not found in {df!r}.'
 
 
 class CheckerLackOfInfo(CheckerError):
-    def __init__(self):
+    def __init__(self, ast):
         self.message = 'Lack of column types.'
+        self.ast = ast
 
 class CheckerParamError(CheckerError):
-    def __init__(self, p, ps):
+    def __init__(self, ast, p, ps):
         self.mesage = f'Parameter {p !r} is not in {ps !r}'
+        self.ast = ast
 
 def ensure_labels(df, col):
     missing = []
@@ -167,7 +171,7 @@ class LocIndexerFrame(Type):
             if col.val in self.df.columns:
                 return Series(_index=self.df.index, _value=self.df.columns.get(col.val))
             else:
-                raise CheckerIndexError(col.val, self.df)
+                raise CheckerIndexError(idx.ast, col.val, self.df)
         elif type(col) is ListLike:
             res = {}
             missing = []
@@ -195,7 +199,26 @@ class DataFrame(Type):
         self.columns = _columns
 
     def __getitem__(self, idx):
-        return LocIndexerFrame(self).__getitem__([0, idx])
+        if type(idx) is StrLike:
+            if idx.val in self.columns:
+                return Series(_index=self.index, _value=self.columns.get(idx.val))
+            else:
+                raise CheckerIndexError(idx.ast, idx.val, self)
+        elif type(idx) is ListLike:
+            res = {}
+            missing = []
+            for label in idx.val:
+                if label.val in self.df.columns:
+                    res[label.val] = self.columns[label.val]
+                else:
+                    missing.append(label)
+            if missing:
+                raise CheckerIndexError(missing)
+            return DataFrame(_index=self.index, _columns=res)
+        elif type(idx) is slice:
+            return self
+        else:
+            raise CheckerNotImplementedError(idx.ast, idx)
 
     def __set_item__(self, idx, value):
         new = self.assign(**{idx: value})
