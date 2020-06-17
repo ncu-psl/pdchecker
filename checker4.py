@@ -17,27 +17,19 @@ def with_ast(node, ast_node):
             def __init__(self, *args, **kwargs):
                 list.__init__(*args, **kwargs)
         node = list_with_ast(node)
+    elif type(node) is str:
+        class str_with_ast(str):
+            def __init__(self, *args, **kwargs):
+                str.__init__(*args, **kwargs)
+        node = str_with_ast(node)
     setattr(node, 'ast', ast_node)
     return node
 
 def mark_slice(subs, s):
-    if type(s) is ast.Index:
-        setattr(s, 'lineno', s.value.lineno)
-        setattr(s, 'col_offset', s.value.col_offset)
-        setattr(s, 'end_lineno', s.value.end_lineno)
-        setattr(s, 'end_col_offset', s.value.end_col_offset)
-    elif type(s) is ast.ExtSlice:
-        for d in s.dims:
-            mark_slice(s, d)
-        setattr(s, 'lineno', s.dims[0].lineno)
-        setattr(s, 'col_offset', s.dims[0].col_offset)
-        setattr(s, 'end_lineno', s.dims[-1].end_lineno)
-        setattr(s, 'end_col_offset', s.dims[-1].end_col_offset)
-    elif type(s) is ast.Slice:
-        setattr(s, 'lineno', subs.lineno)
-        setattr(s, 'col_offset', subs.col_offset)
-        setattr(s, 'end_lineno', subs.end_lineno)
-        setattr(s, 'end_col_offset', subs.end_col_offset)
+    setattr(s, 'lineno', subs.value.end_lineno)
+    setattr(s, 'col_offset', subs.value.end_col_offset)
+    setattr(s, 'end_lineno', subs.end_lineno)
+    setattr(s, 'end_col_offset', subs.end_col_offset)
 
 
 
@@ -63,8 +55,8 @@ class Interpreter:
             body = self.interprets(a.body)
             return self.ClassDef(a, a.name, a.bases, a.keywords, body, a.decorator_list)
         elif type(a) == ast.FunctionDef:
-            body = self.interprets(a.body)
-            return self.FunctionDef(a, body)
+            # body = self.interprets(a.body)
+            return self.FunctionDef(a, a.body)
         elif type(a) == ast.Expr:
             return self.interpret(a.value)
         elif type(a) == ast.Call:
@@ -122,6 +114,9 @@ class Interpreter:
         elif type(a) == ast.ExtSlice:
             dims = self.interprets(a.dims)
             return self.ExtSlice(a, dims)
+        elif type(a) == ast.Return:
+            value = self.interpret(a.value)
+            return self.Return(a, value)
         else:
             if type(a) is list:
                 if a:
@@ -152,6 +147,9 @@ class Ty(Interpreter):
             return None
         return targets[0](value)
     def Attribute(self, a, value, attr, _ctx):
+        attr = with_ast(attr, a)
+        if not value:
+            raise CheckerNotImplementedError(a, attr)
         return getattr(value, attr)
     def Constant(self, a, v):
         if type(v) is str:
@@ -173,9 +171,11 @@ class Ty(Interpreter):
 
         mark_slice(a, a.slice)
         if type(_ctx) == ast.Store:
-            return partial(v.__set_item__, _slice.val)
+            return partial(v.__setitem__, _slice.val)
         s = with_ast(_slice, a.slice)
-        return v[s]
+        if v:
+            return v[s]
+        raise CheckerError('')
     def Index(self, a, v):
         return v
     def Dict(self, a, keys, values):
@@ -199,6 +199,34 @@ class Ty(Interpreter):
         return slice(lower, upper, step)
     def ExtSlice(self, a, dims):
         return dims
+    def FunctionDef(self, a: ast.FunctionDef, body):
+        ret_type = self.from_annotation(a.returns)
+        arg_type = [self.from_annotation(arg.annotation) for arg in a.args.args]
+        class Func:
+            def __call__(self, *args):
+                for arg, expected in zip(args, arg_type):
+                    if not arg.subtype_of(expected):
+                        raise CheckerTypeError(None, expected, arg)
+                return ret_type
+            def __repr__(self):
+                return f'Func({a.name}: {arg_type} -> {ret_type})'
+        f = Func()
+        self.env[a.name] = f
+        return None
+    def Return(self, *args):
+        return
+    def from_annotation(self, a: ast.Expr):
+        #XXX
+        assert type(a) == ast.Name
+        e = a.id
+        if e == 'int':
+            return IntLike(None)
+        elif e == 'str':
+            return StrLike(None)
+        elif e == 'float':
+            return FloatLike()
+        else:
+            raise CheckerNotImplementedError(a, a)
 
 class TyLog(Ty):
     def __init__(self):
@@ -207,17 +235,28 @@ class TyLog(Ty):
         orig = Ty.__getattribute__(self, attr)
         if not hasattr(orig, '__call__') or not orig.__name__[0].isupper():
             return orig
-        def f(a, *args, **kwargs):
-            res = orig(a, *args, **kwargs)
-            self.srcmap[a] = res
-            return res
+        if attr != 'Name':
+            def f(a, *args, **kwargs):
+                res = orig(a, *args, **kwargs)
+                self.srcmap[a] = res
+                return res
+        else:
+            def f(a, _id, ctx):
+                res = orig(a, _id, ctx)
+                if type(ctx) != ast.Store:
+                    self.srcmap[a] = res
+                return res
         f.__name__ = attr
         return f
+
+
 
 class TyError(TyLog):
     def __init__(self):
         TyLog.__init__(self)
         self.errors = []
+
+
 
     def __getattribute__(self, attr):
         orig = TyLog.__getattribute__(self, attr)
@@ -228,12 +267,16 @@ class TyError(TyLog):
                 res = orig(a, *args, **kwargs)
                 return res
             except CheckerError as e:
+                def info(e, a, attr):
+                    if hasattr(e, 'ast') and hasattr(e.ast, attr):
+                        return getattr(e.ast, attr)
+                    return getattr(a, attr)
                 self.errors.append({
                     'node': attr,
-                    'lineno':         e.ast.lineno         if hasattr(e, 'ast') else a.lineno,
-                    'col_offset':     e.ast.col_offset     if hasattr(e, 'ast') else a.col_offset,
-                    'end_lineno':     e.ast.end_lineno     if hasattr(e, 'ast') else a.end_lineno,
-                    'end_col_offset': e.ast.end_col_offset if hasattr(e, 'ast') else a.end_col_offset,
+                    'lineno':         info(e, a, 'lineno'),
+                    'col_offset':     info(e, a, 'col_offset'),
+                    'end_lineno':     info(e, a, 'end_lineno'),
+                    'end_col_offset': info(e, a, 'end_col_offset'),
                     'error': e
                     })
         f.__name__ = attr
@@ -281,10 +324,16 @@ def check(code):
 code = '''
 import pandas as pd
 df = pd.read_csv('./test.csv')
-df2 = pd.read_csv('./test.csv')
-df.merge(df2, on='b')[:, '']
+def some_transform(x: float) -> int:
+    return x ** 2
+df['b'] = df['b'].apply(some_transform)
+df1 = pd.DataFrame([[1,2,'a'], [2, 2, 'a']], columns=['a','d','c'])
+df.merge(df1, on='a')[['c']]
+df.a
 '''
 
+'''
+'''
 
 itpr = TyError()
 itpr.env['Literal'] = Literal()

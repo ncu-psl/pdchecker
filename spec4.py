@@ -2,24 +2,28 @@ from typing import List, Tuple, Callable, Dict, Optional, Type, Any, Union, Gene
 from dataclasses import dataclass, field
 
 class CheckerError(Exception):
-    def __init__(self, message):
+    def __init__(self, message, ast=None):
         self.message = message
+        self.ast = ast
     def __str__(self):
         return self.message
 
+class CheckerTypeError(CheckerError):
+    def __init__(self, ast=None, expected=None, actual=None):
+        self.ast = ast
+        self.message = f'TypeError: expected {expected!r} but got {actual!r}'
+
 class CheckerNotImplementedError(CheckerError):
-    def __init__(self, ast, obj):
+    def __init__(self, ast=None, obj=None):
         self.obj = obj
         self.ast = ast
         self.message = f'Not implemented for {obj !r}.'
 
 class CheckerIndexError(CheckerError):
-    def __init__(self, ast, index, df=None):
+    def __init__(self, index, df=None, ast=None):
         self.index = index
         self.ast = ast
         self.message = f'Index {index !r} not found.'
-        # if df:
-        #     self.message = f'Index {index !r} not found in {df!r}.'
 
 
 class CheckerLackOfInfo(CheckerError):
@@ -28,7 +32,7 @@ class CheckerLackOfInfo(CheckerError):
         self.ast = ast
 
 class CheckerParamError(CheckerError):
-    def __init__(self, ast, p, ps):
+    def __init__(self, p, ps, ast=None):
         self.mesage = f'Parameter {p !r} is not in {ps !r}'
         self.ast = ast
 
@@ -40,11 +44,24 @@ def ensure_labels(df, col):
     if missing:
         raise CheckerIndexError(missing, df)
 
+def from_dtype(dt):
+    if dt.kind == 'i':
+        return IntLike(None)
+    elif dt.kind == 'f':
+        return FloatLike()
+    elif dt.kind == 'O':
+        # XXX
+        return StrLike(None)
+    else:
+        raise CheckerNotImplementedError(obj=dt)
+
 
 def read_csv(fp):
     import pandas as pd
     df = pd.read_csv(fp.val)
-    return DataFrame(_index=df.index.dtype, _columns=df.dtypes.to_dict())
+    return DataFrame(_index=df.index.dtype,
+                     _columns={k: from_dtype(v)
+                                  for k, v in df.dtypes.to_dict().items()})
 
 class Type:
     def subtype_of(self, other):
@@ -134,7 +151,8 @@ class Func(Type):
     arg: Any
     ret: Any
     def __call__(self, arg):
-        # XXX
+        if arg != self.arg:
+            raise CheckerError()
         return self.ret
 
 @dataclass
@@ -171,7 +189,7 @@ class LocIndexerFrame(Type):
             if col.val in self.df.columns:
                 return Series(_index=self.df.index, _value=self.df.columns.get(col.val))
             else:
-                raise CheckerIndexError(idx.ast, col.val, self.df)
+                raise CheckerIndexError(index=col.val, df=self.df, ast=idx.ast)
         elif type(col) is ListLike:
             res = {}
             missing = []
@@ -181,7 +199,7 @@ class LocIndexerFrame(Type):
                 else:
                     missing.append(label)
             if missing:
-                raise CheckerIndexError(missing)
+                raise CheckerIndexError(index=missing)
             return DataFrame(_index=self.df.index, _columns=res)
         elif type(col) is slice:
             return self
@@ -194,33 +212,48 @@ class DataFrame(Type):
     index: Type = None
     columns: Dict[str, Type] = field(default_factory=dict)
 
+
+    def __getattr__(self, attr):
+        if attr in self.columns:
+                return Series(_index=self.index, _value=self.columns.get(attr))
+        raise CheckerNotImplementedError(attr.ast, attr)
+
     def __init__(self, data=None, index=None, columns=None, *, _index=None, _columns=None):
         self.index = _index
         self.columns = _columns
+        if type(data) is ListLike and type(data.typ) is ListLike:
+            if not index:
+                self.index = IntLike(None)
+            if not columns:
+                self.columns = {i:x for i, x in enumerate(data.typ.val)}
+            else:
+                self.columns = {i.val:x for i, x in zip(columns.val, data.typ.val)}
+
+
 
     def __getitem__(self, idx):
         if type(idx) is StrLike:
             if idx.val in self.columns:
                 return Series(_index=self.index, _value=self.columns.get(idx.val))
             else:
-                raise CheckerIndexError(idx.ast, idx.val, self)
+                raise CheckerIndexError(index=idx.val, df=self, ast=idx.ast)
         elif type(idx) is ListLike:
             res = {}
             missing = []
             for label in idx.val:
-                if label.val in self.df.columns:
+                if label.val in self.columns:
                     res[label.val] = self.columns[label.val]
                 else:
-                    missing.append(label)
+                    missing.append(label.val)
             if missing:
-                raise CheckerIndexError(missing)
+                raise CheckerIndexError(index=missing, ast=idx.ast)
             return DataFrame(_index=self.index, _columns=res)
         elif type(idx) is slice:
             return self
         else:
             raise CheckerNotImplementedError(idx.ast, idx)
 
-    def __set_item__(self, idx, value):
+    def __setitem__(self, idx, value):
         new = self.assign(**{idx: value})
         self.columns = new.columns
         self.index = new.index
@@ -243,8 +276,8 @@ class DataFrame(Type):
                     raise CheckerError('Callable not returning a Series')
             elif type(v) is ListLike:
                 new_cols[k] = v.value
-            else:
-                raise CheckerError(f'Not type checked: {v._type!r}')
+            # else:
+            #     raise Exception(f'Not type checked: {v!r}')
         return DataFrame(_index=self.index, _columns={**self.columns, **new_cols})
 
     def count(self, axis=None):
@@ -272,10 +305,26 @@ class DataFrame(Type):
         left_fields  = [ self.columns[lbl] for lbl in on_labels]
         right_fields = [other.columns[lbl] for lbl in on_labels]
 
-        if not all(t1 == t2 for t1, t2 in zip(left_fields, right_fields)):
+        if not all(t1.subtype(t2) for t1, t2 in zip(left_fields, right_fields)):
             raise CheckerError('type mismatch')
 
-        return DataFrame(_index=self.index, _columns={**self.columns, **other.columns})
+        overlapped = set(self.columns.keys()).intersection(set(other.columns.keys())) - set(on_labels)
+        new = {}
+
+        for lbl, typ in self.columns.items():
+            if lbl in overlapped:
+                lbl += '_x'
+            new[lbl] = typ
+
+        for lbl, typ in other.columns.items():
+            if lbl in overlapped:
+                lbl += '_y'
+            new[lbl] = typ
+
+        for lbl in on_labels:
+            new[lbl] = self.columns[lbl]
+
+        return DataFrame(_index=self.index, _columns=new)
 
     def groupby(self, by=None):
         key = None
@@ -297,7 +346,7 @@ class DataFrame(Type):
             if label.val not in self.columns:
                 missing.append(label.val)
         if missing:
-            raise CheckerIndexError(missing)
+            raise CheckerIndexError(index=missing)
         return self
 
     def sort_values(self, by, axis=None, ascending=None, inplace=None, kind=None, na_position=None, ignore_index=None):
@@ -308,7 +357,7 @@ class DataFrame(Type):
             if label.val not in self.columns:
                 missing.append(label.val)
         if missing:
-            raise CheckerIndexError(missing)
+            raise CheckerIndexError(index=missing)
 
         if inplace:
             return None
@@ -338,7 +387,7 @@ class DataFrameGroupBy:
     df: DataFrame = None
 
     def agg(self, func, axis=0):
-        if type(func) is not Func:
+        if type(func) is not Func and not hasattr(func, '__call__'):
             raise CheckerError('not a function')
 
         return DataFrame(_index=tuple(self.df.columns[k] for k in self.key),
