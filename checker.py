@@ -297,52 +297,12 @@ class Sp(Interpreter):
     def Constant(self, a, v):
         return
 
-
-# sp = Sp()
-# code = '''
-# class D:
-#     def f(x: int) -> int: ...
-# '''
-# sp.interpret(ast.parse(code))
-# for k,v in Sp.env.items():
-#     for f, bs in v.items():
-#         for b in bs:
-#             print(k, f, [ast.dump(x) for x in b])
-
 class Literal:
     def __getitem__(self, value):
         return LiteralType(value)
 
 def check(code):
     itpr = TyError()
-    # itpr.env['df1'] = DataFrame(_index=int, _columns={'x': int})
-    # itpr.env['sum']     = Func(IntLike, IntLike)
     itpr.env['Literal'] = Literal()
     itpr.interpret(ast.parse(code))
     return itpr
-
-code = '''
-import pandas as pd
-df = pd.read_csv('./test.csv')
-def some_transform(x: float) -> int:
-    return x ** 2
-df['b'] = df['b'].apply(some_transform)
-df1 = pd.DataFrame([[1,2,'a'], [2, 2, 'a']], columns=['a','d','c'])
-df.merge(df1, on='a')[['c']]
-df.a
-'''
-
-'''
-'''
-
-itpr = TyError()
-itpr.env['Literal'] = Literal()
-a = ast.parse(code)
-res = itpr.interpret(a)
-print(res)
-print(itpr.errors)
-
-# print(t)
-# print(itpr.env)
-# print(itpr.srcmap)
-

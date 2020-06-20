@@ -361,7 +361,7 @@ class DataFrame(Type):
 
         if inplace:
             return None
-        
+
         return self
 
 

@@ -7,14 +7,12 @@ from checker import check
 import logging
 
 server = LanguageServer()
-# logging.basicConfig(filename='pygls.log', filemode='w', level=logging.DEBUG)
 logging.basicConfig(level=logging.DEBUG)
 
 
 class Checker:
 
     def validate(self, source):
-        # logging.debug(f'source: {source}')
         self.itpr = check(source)
         diagnostics = []
         logging.debug(f'itpr errors: {self.itpr.errors}')
@@ -24,7 +22,6 @@ class Checker:
             l2 = item['end_lineno'] - 1
             c2 = item['end_col_offset']
             msg = item['error'].message
-            # logging.debug(f'creating diagnostics: {(l, c, msg)!r}')
             diagnostics.append(Diagnostic(
                 range=Range(Position(l1, c1), Position(l2, c2)),
                 message=msg,
@@ -70,9 +67,7 @@ async def handle_sighelp(ls: LanguageServer, params):
 async def handle_hover(ls, params):
     text_doc = ls.workspace.get_document(params.textDocument.uri)
     pos = params.position
-    # return MarkupContent(kind='plaintext', value=)
     return Hover(contents=repr(checker.help(pos)[0][1]))
 
 
 server.start_tcp('localhost', 8080)
-# server.start_io()
