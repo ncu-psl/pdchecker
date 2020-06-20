@@ -2,14 +2,14 @@ import ast
 
 from typing import List
 
-from spec4 import *
+from spec import *
 from collections import defaultdict
 
 from functools import partial, partialmethod
 
 from pdb import set_trace
 
-import spec4 as spec
+import spec
 
 def with_ast(node, ast_node):
     if type(node) is list:

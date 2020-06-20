@@ -3,7 +3,7 @@ from pygls import features
 from pygls.server import LanguageServer
 from pygls.types import Range, Position, Diagnostic, SignatureHelp, SignatureInformation, Hover
 
-from checker4 import check
+from checker import check
 import logging
 
 server = LanguageServer()
