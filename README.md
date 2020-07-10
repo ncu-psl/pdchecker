@@ -26,7 +26,8 @@ PDChecker 是一個實驗性的針對 `pandas` 的靜態分析工具，
 4. 使用指令列或是LSP來檢查 `pandas` 程式碼
 
     ~~~
-    cd example; python ../checker.py ex.py
+    $ cd example; python ../checker.py ex.py
+    4	2	Index 'not_existed' not found.
     ~~~
 
 
