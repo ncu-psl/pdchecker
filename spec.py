@@ -1,4 +1,4 @@
-from typing import List, Tuple, Callable, Dict, Optional, Type, Any, Union, Generic, TypeVar, get_args, get_origin
+from typing import List, Tuple, Callable, Dict, Optional, Type, Any, Union, Generic, TypeVar
 from dataclasses import dataclass, field
 
 class CheckerError(Exception):
