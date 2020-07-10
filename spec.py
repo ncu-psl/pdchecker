@@ -59,7 +59,7 @@ def from_dtype(dt):
 def read_csv(fp):
     import pandas as pd
     df = pd.read_csv(fp.val)
-    return DataFrame(_index=df.index.dtype,
+    return DataFrame(_index=from_dtype(df.index.dtype),
                      _columns={k: from_dtype(v)
                                   for k, v in df.dtypes.to_dict().items()})
 
