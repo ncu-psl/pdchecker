@@ -14,7 +14,7 @@ PDChecker 是一個實驗性的針對 `pandas` 的靜態分析工具，
 2. （可選）使用 Virtual Environment 來準備環境
 
     ~~~~
-    pip -m venv venv
+    python3.8 -m venv venv
     source venv/bin/activate
     ~~~~
 3. 安裝相依套件
