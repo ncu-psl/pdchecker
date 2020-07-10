@@ -306,3 +306,13 @@ def check(code):
     itpr.env['Literal'] = Literal()
     itpr.interpret(ast.parse(code))
     return itpr
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) > 1:
+        code = open(sys.argv[1]).read()
+    else:
+        code = sys.stdin.read()
+    itpr = check(code)
+    for e in itpr.errors:
+        print(e['lineno'], e['col_offset'], e['error'].message, sep='\t')
