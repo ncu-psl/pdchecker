@@ -43,3 +43,12 @@ Also, PDChecker is in an early development stage currently, please feel free to 
 * `checker.py` is the interpreter which executes our checker's *semantic*.
 * `spec.py` contains the definition of our checker's *check functions*.
 * `lsp.py` is the LSP Server implementation.
+
+
+## Publication
+
+* YungYu Zhuang and Ming-Yang Lu.  
+Enabling Type Checking on Columns in Data Frame Libraries by Abstract Interpretation.  
+IEEE Access, Volume 10,  
+pp.14418-14428, January 2022.  
+[Available at IEEE Xplore](https://doi.org/10.1109/ACCESS.2022.3146287)
